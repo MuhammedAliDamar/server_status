@@ -211,7 +211,9 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable --now "$SERVICE_NAME"
+systemctl enable "$SERVICE_NAME"
+# Restart so existing service picks up new .env (re-run idempotent)
+systemctl restart "$SERVICE_NAME"
 sleep 2
 
 # ---------- sonuç ----------
