@@ -21,8 +21,8 @@ set -euo pipefail
 
 INSTALL_DIR="${INSTALL_DIR:-/opt/fleet-panel}"
 REPO="https://github.com/MuhammedAliDamar/server_status.git"
-PANEL_PORT="${PANEL_PORT:-3000}"
-WS_PORT="${WS_PORT:-4000}"
+PANEL_PORT="${PANEL_PORT:-9852}"
+WS_PORT="${WS_PORT:-2589}"
 
 # Argümanlar (opsiyonel, vermezsen random)
 DB_NAME=""
@@ -189,6 +189,42 @@ if [[ -n "$PM2_STARTUP" ]]; then
   pm2 save
 fi
 
+# ---------- Self-agent (panel'in kendi sunucusunu da izle) ----------
+echo "==> Self-agent (panel sunucusu kendi metriklerini göstersin)"
+SELF_AGENT_DIR="/opt/fleet-agent-self"
+mkdir -p "$SELF_AGENT_DIR"
+cp "$INSTALL_DIR/agent/agent.js" "$SELF_AGENT_DIR/agent.js"
+cp "$INSTALL_DIR/agent/package.json" "$SELF_AGENT_DIR/package.json"
+chmod 750 "$SELF_AGENT_DIR"
+chmod 640 "$SELF_AGENT_DIR/agent.js" "$SELF_AGENT_DIR/package.json"
+
+cd "$SELF_AGENT_DIR"
+npm install --omit=dev --no-audit --no-fund
+
+# Panel API'sini bekle (en fazla 30sn)
+echo "    panel ayağa kalkmasını bekliyor..."
+for i in $(seq 1 30); do
+  if curl -fsS "http://localhost:$PANEL_PORT/login" -o /dev/null 2>&1; then break; fi
+  sleep 1
+done
+
+# Eski self-agent varsa öldür
+pm2 delete fleet-agent-self 2>/dev/null || true
+
+# Self-agent'i PM2 ile başlat (env shell üzerinden geçirilir, pm2 save bunları diske yazar)
+PANEL_HTTP_URL="http://localhost:$PANEL_PORT" \
+AGENT_REGISTER_SECRET="$REGISTRATION_SECRET" \
+AGENT_TOKEN_FILE="$SELF_AGENT_DIR/.token" \
+AGENT_WSURL_FILE="$SELF_AGENT_DIR/.wsurl" \
+AGENT_HOSTNAME="$(hostname)" \
+  pm2 start "$SELF_AGENT_DIR/agent.js" \
+    --name fleet-agent-self \
+    --max-memory-restart 128M \
+    --output /var/log/fleet-panel/agent-self-out.log \
+    --error /var/log/fleet-panel/agent-self-err.log
+
+pm2 save
+
 # ---------- firewall ipuçları ----------
 if command -v ufw >/dev/null 2>&1 && ufw status | grep -q active; then
   ufw allow "$PANEL_PORT" >/dev/null 2>&1 || true
@@ -219,12 +255,16 @@ cat <<EOF
      Log  : /var/log/fleet-panel/
 
   🛠  PM2 yönetimi
-     pm2 status                        # durum
+     pm2 status                                # tüm process'ler
      pm2 logs fleet-panel-web --lines 50
      pm2 logs fleet-panel-ws --lines 50
-     pm2 restart fleet-panel-web fleet-panel-ws
+     pm2 logs fleet-agent-self --lines 50      # panel'in kendi agent'ı
+     pm2 restart all
 
-  🚀 Bir sunucuya agent kurmak (sıfır UI etkileşimi):
+  📡 Bu sunucu da otomatik izleniyor (fleet-agent-self).
+     Dashboard'a girdiğinde panel sunucusu hazır şekilde listede olacak.
+
+  🚀 BAŞKA bir sunucuya agent kurmak (sıfır UI etkileşimi):
      curl -fsSL https://raw.githubusercontent.com/MuhammedAliDamar/server_status/main/install-agent.sh \\
        | sudo bash -s -- --panel http://$PUBLIC_IP:$PANEL_PORT --register $REGISTRATION_SECRET
 

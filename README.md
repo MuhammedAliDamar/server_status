@@ -6,8 +6,8 @@
 
 ```
 [panel sunucusu]                          [hedef sunucular]
-Next.js (UI + API)      :3000                    
-  └─ HTTP ────►  ws-server     :4000  ◄── WS ──  agent.js
+Next.js (UI + API)      :9852                    
+  └─ HTTP ────►  ws-server     :2589  ◄── WS ──  agent.js
                   ├─ live state (in-memory)        ├─ os metrics
                   ├─ alert engine (Slack)          ├─ pm2 jlist
                   └─ SQLite (servers, audit)       ├─ git log

@@ -166,13 +166,12 @@ AGENT_TOKEN=$AGENT_TOKEN
 ${HOSTNAME_ARG:+AGENT_HOSTNAME=$HOSTNAME_ARG}
 EOF
 else
-  # Register modu: agent HTTP API'sini ve WS endpoint'ini bilmeli
-  # PANEL_URL http://host:3000 → WS http://host:3000 (agent içinde port türetilir)
+  # Register modu: WS URL'sini panel register response'unda dönecek
   cat > "$ENV_FILE" <<EOF
 PANEL_HTTP_URL=$PANEL_URL
-PANEL_URL=$(echo "$PANEL_URL" | sed -e 's|^http://|ws://|' -e 's|^https://|wss://|' -e 's|:3000\b|:4000|')
 AGENT_REGISTER_SECRET=$REGISTER_SECRET
 AGENT_TOKEN_FILE=$INSTALL_DIR/.token
+AGENT_WSURL_FILE=$INSTALL_DIR/.wsurl
 ${HOSTNAME_ARG:+AGENT_HOSTNAME=$HOSTNAME_ARG}
 EOF
 fi

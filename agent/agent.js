@@ -14,17 +14,18 @@ import WebSocket from "ws";
 
 const execFileAsync = promisify(execFile);
 
-// PANEL_URL: panel'in ws endpoint'i — örn: ws://panel.example.com:4000/agent
-const RAW_PANEL_URL = process.env.PANEL_URL || "ws://localhost:4000";
-const PANEL_URL = RAW_PANEL_URL.endsWith("/agent") ? RAW_PANEL_URL : `${RAW_PANEL_URL.replace(/\/$/, "")}/agent`;
-// Auto-register için panel'in HTTP URL'si (genelde PANEL_URL'den türetilir)
-const PANEL_HTTP_URL = process.env.PANEL_HTTP_URL ||
-  PANEL_URL.replace(/^wss?:\/\//, (m) => m === "wss://" ? "https://" : "http://")
-    .replace(/:(\d+)\/agent$/, (_, p) => `:${parseInt(p, 10) - 1000}`)  // 4000 → 3000
-    .replace(/\/agent$/, "");
+// İki mod:
+//   - Manuel: PANEL_URL (ws://...) + AGENT_TOKEN
+//   - Register: PANEL_HTTP_URL (http://...) + AGENT_REGISTER_SECRET → register sırasında WS URL'si gelir
+const PANEL_HTTP_URL = process.env.PANEL_HTTP_URL || "";
+let PANEL_URL = process.env.PANEL_URL || "";
+if (PANEL_URL && !PANEL_URL.endsWith("/agent")) {
+  PANEL_URL = `${PANEL_URL.replace(/\/$/, "")}/agent`;
+}
 
 const AGENT_REGISTER_SECRET = process.env.AGENT_REGISTER_SECRET || "";
 const TOKEN_FILE = process.env.AGENT_TOKEN_FILE || "/opt/fleet-agent/.token";
+const WS_URL_FILE = process.env.AGENT_WSURL_FILE || "/opt/fleet-agent/.wsurl";
 let AGENT_TOKEN = process.env.AGENT_TOKEN || "";
 const HOSTNAME = process.env.AGENT_HOSTNAME || os.hostname();
 const SNAPSHOT_INTERVAL_MS = parseInt(process.env.SNAPSHOT_INTERVAL_MS || "2000", 10);
@@ -77,18 +78,25 @@ const FINGERPRINT = getMachineFingerprint();
 async function loadOrRegisterToken() {
   if (AGENT_TOKEN && TOKEN_FORMAT.test(AGENT_TOKEN)) return AGENT_TOKEN;
 
-  // Daha önce kaydedilmiş token dosyası?
+  // Daha önce kaydedilmiş token + ws url?
   try {
     const saved = fsSync.readFileSync(TOKEN_FILE, "utf8").trim();
     if (TOKEN_FORMAT.test(saved)) {
       console.log("[agent] token loaded from", TOKEN_FILE);
+      // Kayıtlı ws url varsa onu kullan
+      try {
+        const ws = fsSync.readFileSync(WS_URL_FILE, "utf8").trim();
+        if (ws.startsWith("ws://") || ws.startsWith("wss://")) {
+          PANEL_URL = ws.endsWith("/agent") ? ws : `${ws.replace(/\/$/, "")}/agent`;
+        }
+      } catch {}
       return saved;
     }
   } catch {}
 
   // Auto-register
-  if (!AGENT_REGISTER_SECRET) {
-    console.error("[fatal] AGENT_TOKEN or AGENT_REGISTER_SECRET (+ PANEL_HTTP_URL) gerekli");
+  if (!AGENT_REGISTER_SECRET || !PANEL_HTTP_URL) {
+    console.error("[fatal] AGENT_TOKEN gerekli, ya da (AGENT_REGISTER_SECRET + PANEL_HTTP_URL) ver");
     process.exit(1);
   }
 
@@ -125,14 +133,22 @@ async function loadOrRegisterToken() {
         console.error("[fatal] register: invalid token in response");
         process.exit(1);
       }
-      // Token'ı kaydet (sonraki restartlarda yeniden register olmasın)
+      // Token + ws url'i kaydet
       try {
         fsSync.mkdirSync(path.dirname(TOKEN_FILE), { recursive: true });
         fsSync.writeFileSync(TOKEN_FILE, data.token, { mode: 0o600 });
+        if (data.wsUrl) {
+          fsSync.writeFileSync(WS_URL_FILE, data.wsUrl, { mode: 0o600 });
+        }
       } catch (e) {
         console.warn("[warn] token file write failed:", e.message);
       }
+      // WS URL'sini güncelle (register response'undan)
+      if (data.wsUrl) {
+        PANEL_URL = data.wsUrl.endsWith("/agent") ? data.wsUrl : `${data.wsUrl.replace(/\/$/, "")}/agent`;
+      }
       console.log(`[agent] registered as "${data.name}" (id=${data.serverId})`);
+      console.log(`[agent] ws endpoint: ${PANEL_URL}`);
       return data.token;
     } catch (err) {
       console.error(`[agent] register attempt ${attempt} failed:`, err.message);
@@ -475,6 +491,10 @@ process.on("SIGTERM", () => {
 
 (async () => {
   AGENT_TOKEN = await loadOrRegisterToken();
+  if (!PANEL_URL) {
+    console.error("[fatal] PANEL_URL belirlenemedi (token modunda env'e ekleyin veya register modunda kullanın)");
+    process.exit(1);
+  }
   console.log(`[agent] fingerprint=${FINGERPRINT.slice(0, 12)}…`);
   connect();
 })();

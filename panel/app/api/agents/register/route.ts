@@ -135,9 +135,17 @@ export async function POST(req: Request) {
     });
   }
 
+  // Agent'a WS endpoint'ini de döndür — port türetme yapması gerekmesin
+  const hostHeader = req.headers.get("host") || "localhost";
+  const wsHost = hostHeader.split(":")[0];
+  const wsPort = process.env.WS_PORT || "2589";
+  const wsProtocol = req.headers.get("x-forwarded-proto") === "https" ? "wss" : "ws";
+  const wsUrl = `${wsProtocol}://${wsHost}:${wsPort}/agent`;
+
   return NextResponse.json({
     serverId: server.id,
     name: server.name,
     token,
+    wsUrl,
   });
 }
