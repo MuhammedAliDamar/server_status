@@ -197,7 +197,8 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 
-# Güvenlik hardening
+# Güvenlik hardening (Node.js V8 JIT ile uyumlu olanlar)
+# Not: MemoryDenyWriteExecute Node JIT'i bozar (V8 executable page allocate eder)
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
@@ -206,9 +207,7 @@ ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
-RestrictNamespaces=true
 LockPersonality=true
-MemoryDenyWriteExecute=true
 RestrictRealtime=true
 SystemCallArchitectures=native
 ReadWritePaths=/tmp
