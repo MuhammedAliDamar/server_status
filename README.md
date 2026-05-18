@@ -103,7 +103,29 @@ pm2 logs fleet-panel-web --lines 50
 pm2 restart fleet-panel-web fleet-panel-ws
 ```
 
-> ⚠️ Production'da panel'i HTTPS arkasına al (Caddy en kolayı). Default port'ları firewall ile sınırla.
+> ⚠️ Production'da panel'i HTTPS arkasına al (aşağıdaki nginx setup-script'i ile).
+
+### HTTPS + custom domain (nginx + Let's Encrypt)
+
+Panel kurulu sunucuda:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MuhammedAliDamar/server_status/main/setup-nginx.sh | \
+  sudo bash -s -- --domain monitor.kisisel.ai --email senin@mail.com
+```
+
+Önce DNS'i hallet: `monitor.kisisel.ai` A kaydını sunucu IP'ne yönlendir.
+
+Script:
+- nginx + certbot kurar
+- `monitor.kisisel.ai` için ters proxy config'i yazar:
+  - `https://monitor.kisisel.ai/` → panel web (`:9852`)
+  - `wss://monitor.kisisel.ai/agent` → WS server (`:2589`)
+- Let's Encrypt cert alır, otomatik yenileme
+- `panel/.env`'ye `PANEL_EXTERNAL_WS_URL` ekler (agent'lara HTTPS WS URL'si döner)
+- PM2 ile panel'i restart eder
+
+Sonuç: agent'lar artık sadece 443 portuna bağlanır, sunucularda 9852/2589 portlarını internete açmana gerek kalmaz.
 
 ## Özellikler
 
