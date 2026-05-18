@@ -64,7 +64,7 @@ export type AgentError = {
   context?: string;
 };
 
-export type AgentMessage = AgentHello | AgentSnapshot | AgentLog | AgentError;
+export type AgentMessage = AgentHello | AgentSnapshot | AgentLog | AgentError | CmdAck;
 
 // Panel → Agent
 export type CmdMessage =
@@ -80,3 +80,6 @@ export type CmdAck = {
   error?: string;
   output?: string;
 };
+
+// Helper for runtime parsing (lets TS narrow without complaining)
+export type AnyAgentMessage = AgentMessage & { type: string };
