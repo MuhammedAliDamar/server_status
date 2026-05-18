@@ -41,11 +41,22 @@ Panel dashboard'da sunucu canlı görünür: CPU/RAM/Disk barları, PM2 process 
 
 ## Agent kurulumu (tek satır)
 
-Hedef sunucuya SSH ile gir, panel'den aldığın token ile şu satırı çalıştır:
+İki mod var. **Otomatik mod (önerilen)** — panel UI'da hiçbir şey eklemezsin:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/MuhammedAliDamar/server_status/main/install-agent.sh | \
-  sudo bash -s -- --panel ws://<panel-ip-veya-domain>:4000 --token flt_xxx
+  sudo bash -s -- --panel http://<panel-ip>:3000 --register flt_reg_xxx
+```
+
+Registration secret panel kurulurken üretilir (install-panel.sh sonundaki çıktıda var, ya da `grep AGENT_REGISTRATION_SECRET /opt/fleet-panel/panel/.env`).
+
+Agent başlarken kendi **fingerprint** (machine-id + hostname → SHA-256) oluşturur, panel'e POST atar, kendine bir server kaydı + token üretir. Aynı sunucuda script tekrar çalıştırılırsa aynı server'a denk gelir (idempotent).
+
+**Manuel mod** — panel UI'dan elle sunucu oluşturup token kopyaladıysan:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MuhammedAliDamar/server_status/main/install-agent.sh | \
+  sudo bash -s -- --panel ws://<panel-ip>:4000 --token flt_xxx
 ```
 
 Otomatik olarak:
@@ -68,14 +79,29 @@ curl -fsSL https://raw.githubusercontent.com/MuhammedAliDamar/server_status/main
 ```
 
 Otomatik olarak:
-- Node.js 20 + git + build araçları kurar
+- **Node.js 20 + PostgreSQL 16** kurar
+- DB ve user oluşturur (random password): `fleet_panel` / `fleet_panel`
 - Repo'yu `/opt/fleet-panel` altına klonlar
-- Random `ADMIN_PASSWORD` ve `SESSION_SECRET` üretir, `.env`'e yazar
-- `prisma migrate deploy`, `npm run build`
-- systemd: `fleet-panel-web` (Next.js, :3000) + `fleet-panel-ws` (WS, :4000)
-- Sonuçta URL + şifre yazdırır
+- Random `ADMIN_PASSWORD`, `SESSION_SECRET`, `AGENT_REGISTRATION_SECRET` üretir → `.env`'e yazar
+- `prisma migrate deploy` + `next build`
+- **PM2** ile `fleet-panel-web` (Next.js, :3000) + `fleet-panel-ws` (WS, :4000), `pm2 startup` ile boot autostart
+- Sonuçta URL + admin password + registration secret + agent kurulum komutu yazdırır
+
+Override parametreleri (opsiyonel):
+```bash
+sudo bash install-panel.sh \
+  --db-name fleetdb --db-user fleet --db-pass mypass \
+  --admin-pass myadmin --port 3000 --ws-port 4000
+```
 
 Minimum donanım: **1 GB RAM, 1 vCPU, 25 GB disk** yeterli.
+
+PM2 yönetimi:
+```bash
+pm2 status
+pm2 logs fleet-panel-web --lines 50
+pm2 restart fleet-panel-web fleet-panel-ws
+```
 
 > ⚠️ Production'da panel'i HTTPS arkasına al (Caddy en kolayı). Default port'ları firewall ile sınırla.
 

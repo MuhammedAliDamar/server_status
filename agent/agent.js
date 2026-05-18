@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 // fleet-agent — her sunucuda çalışan hafif metric/komut collector
-// Kurulum: PANEL_URL, AGENT_TOKEN env vars + `node agent.js` (veya systemd)
+// Mod 1 (token): AGENT_TOKEN env var ile çalış
+// Mod 2 (auto-register): AGENT_REGISTER_SECRET + PANEL_HTTP_URL ile başla → token al → devam et
 
 import os from "node:os";
+import crypto from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import path from "node:path";
 import WebSocket from "ws";
 
@@ -14,7 +17,15 @@ const execFileAsync = promisify(execFile);
 // PANEL_URL: panel'in ws endpoint'i — örn: ws://panel.example.com:4000/agent
 const RAW_PANEL_URL = process.env.PANEL_URL || "ws://localhost:4000";
 const PANEL_URL = RAW_PANEL_URL.endsWith("/agent") ? RAW_PANEL_URL : `${RAW_PANEL_URL.replace(/\/$/, "")}/agent`;
-const AGENT_TOKEN = process.env.AGENT_TOKEN || "";
+// Auto-register için panel'in HTTP URL'si (genelde PANEL_URL'den türetilir)
+const PANEL_HTTP_URL = process.env.PANEL_HTTP_URL ||
+  PANEL_URL.replace(/^wss?:\/\//, (m) => m === "wss://" ? "https://" : "http://")
+    .replace(/:(\d+)\/agent$/, (_, p) => `:${parseInt(p, 10) - 1000}`)  // 4000 → 3000
+    .replace(/\/agent$/, "");
+
+const AGENT_REGISTER_SECRET = process.env.AGENT_REGISTER_SECRET || "";
+const TOKEN_FILE = process.env.AGENT_TOKEN_FILE || "/opt/fleet-agent/.token";
+let AGENT_TOKEN = process.env.AGENT_TOKEN || "";
 const HOSTNAME = process.env.AGENT_HOSTNAME || os.hostname();
 const SNAPSHOT_INTERVAL_MS = parseInt(process.env.SNAPSHOT_INTERVAL_MS || "2000", 10);
 const RECONNECT_DELAY_MS = 3000;
@@ -31,8 +42,105 @@ const CMD_RATE_LIMIT_PER_MIN = 30;            // dakikada max komut sayısı
 const TOKEN_FORMAT = /^flt_[A-Za-z0-9]{30,80}$/;  // bcrypt DoS önleme: bilinen format dışı reddet
 const MAX_INVALID_MSGS = 10;                  // bu sayıyı aşan invalid mesaj → bağlantı kop
 
-if (!AGENT_TOKEN || !TOKEN_FORMAT.test(AGENT_TOKEN)) {
-  console.error("[fatal] AGENT_TOKEN env var required and must match format flt_<alnum>");
+// ---------- Fingerprint (unique machine ID) ----------
+
+function readFirst(paths) {
+  for (const p of paths) {
+    try {
+      const v = fsSync.readFileSync(p, "utf8").trim();
+      if (v) return v;
+    } catch {}
+  }
+  return "";
+}
+
+function getMachineFingerprint() {
+  let raw = readFirst(["/etc/machine-id", "/var/lib/dbus/machine-id"]);
+  if (!raw) {
+    // Mac/BSD fallback: ana MAC + hostname
+    const ifaces = os.networkInterfaces();
+    const macs = [];
+    for (const ifs of Object.values(ifaces)) {
+      for (const i of ifs || []) {
+        if (i && !i.internal && i.mac && i.mac !== "00:00:00:00:00:00") macs.push(i.mac);
+      }
+    }
+    raw = macs.sort().join("|") || os.hostname();
+  }
+  return crypto.createHash("sha256").update(raw + "|" + os.hostname()).digest("hex").slice(0, 32);
+}
+
+const FINGERPRINT = getMachineFingerprint();
+
+// ---------- Token yükleme veya auto-register ----------
+
+async function loadOrRegisterToken() {
+  if (AGENT_TOKEN && TOKEN_FORMAT.test(AGENT_TOKEN)) return AGENT_TOKEN;
+
+  // Daha önce kaydedilmiş token dosyası?
+  try {
+    const saved = fsSync.readFileSync(TOKEN_FILE, "utf8").trim();
+    if (TOKEN_FORMAT.test(saved)) {
+      console.log("[agent] token loaded from", TOKEN_FILE);
+      return saved;
+    }
+  } catch {}
+
+  // Auto-register
+  if (!AGENT_REGISTER_SECRET) {
+    console.error("[fatal] AGENT_TOKEN or AGENT_REGISTER_SECRET (+ PANEL_HTTP_URL) gerekli");
+    process.exit(1);
+  }
+
+  console.log(`[agent] auto-registering to ${PANEL_HTTP_URL}/api/agents/register`);
+  const body = {
+    registerSecret: AGENT_REGISTER_SECRET,
+    fingerprint: FINGERPRINT,
+    hostname: HOSTNAME,
+    os: `${os.type()} ${os.release()}`,
+    cpuCores: os.cpus().length,
+    totalMem: os.totalmem(),
+  };
+
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      const res = await fetch(`${PANEL_HTTP_URL}/api/agents/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (res.status === 429) {
+        console.error("[agent] rate limited, waiting 30s");
+        await new Promise((r) => setTimeout(r, 30_000));
+        continue;
+      }
+      if (!res.ok) {
+        const err = await res.text();
+        console.error(`[fatal] register failed: ${res.status} ${err}`);
+        process.exit(1);
+      }
+      const data = await res.json();
+      if (!TOKEN_FORMAT.test(data.token)) {
+        console.error("[fatal] register: invalid token in response");
+        process.exit(1);
+      }
+      // Token'ı kaydet (sonraki restartlarda yeniden register olmasın)
+      try {
+        fsSync.mkdirSync(path.dirname(TOKEN_FILE), { recursive: true });
+        fsSync.writeFileSync(TOKEN_FILE, data.token, { mode: 0o600 });
+      } catch (e) {
+        console.warn("[warn] token file write failed:", e.message);
+      }
+      console.log(`[agent] registered as "${data.name}" (id=${data.serverId})`);
+      return data.token;
+    } catch (err) {
+      console.error(`[agent] register attempt ${attempt} failed:`, err.message);
+      if (attempt < 5) await new Promise((r) => setTimeout(r, 3000 * attempt));
+    }
+  }
+
+  console.error("[fatal] register: max attempts reached");
   process.exit(1);
 }
 
@@ -365,4 +473,8 @@ process.on("SIGTERM", () => {
   process.exit(0);
 });
 
-connect();
+(async () => {
+  AGENT_TOKEN = await loadOrRegisterToken();
+  console.log(`[agent] fingerprint=${FINGERPRINT.slice(0, 12)}…`);
+  connect();
+})();

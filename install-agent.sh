@@ -1,17 +1,22 @@
 #!/usr/bin/env bash
 # fleet-agent installer
-# Usage:
-#   curl -fsSL https://raw.githubusercontent.com/MuhammedAliDamar/server_status/main/install-agent.sh | \
-#     sudo bash -s -- --panel ws://panel.example.com:4000 --token flt_xxx
 #
-# Veya interaktif (değer sorar):
-#   curl -fsSL https://raw.githubusercontent.com/MuhammedAliDamar/server_status/main/install-agent.sh | sudo bash
+# Otomatik mod (panel UI'da hiçbir şey eklemen gerekmez):
+#   curl -fsSL https://raw.githubusercontent.com/MuhammedAliDamar/server_status/main/install-agent.sh | \
+#     sudo bash -s -- --panel http://panel.example.com:3000 --register flt_reg_xxx
+#
+# Manuel token modu (panel UI'dan elle ekleyip token kopyaladıysan):
+#   curl -fsSL .../install-agent.sh | sudo bash -s -- --panel ws://panel.example.com:4000 --token flt_xxx
+#
+# Veya değer vermeden — script soracak:
+#   curl -fsSL .../install-agent.sh | sudo bash
 
 set -euo pipefail
 
 # ---------- argümanlar ----------
 PANEL_URL=""
 AGENT_TOKEN=""
+REGISTER_SECRET=""
 HOSTNAME_ARG=""
 INSTALL_DIR="/opt/fleet-agent"
 SERVICE_NAME="fleet-agent"
@@ -21,11 +26,12 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --panel|-p) PANEL_URL="$2"; shift 2 ;;
     --token|-t) AGENT_TOKEN="$2"; shift 2 ;;
-    --hostname|-h) HOSTNAME_ARG="$2"; shift 2 ;;
+    --register|-r) REGISTER_SECRET="$2"; shift 2 ;;
+    --hostname) HOSTNAME_ARG="$2"; shift 2 ;;
     --dir) INSTALL_DIR="$2"; shift 2 ;;
     --service-name) SERVICE_NAME="$2"; shift 2 ;;
-    --help)
-      sed -n '2,12p' "$0"
+    --help|-h)
+      sed -n '2,14p' "$0"
       exit 0
       ;;
     *) echo "Unknown arg: $1" >&2; exit 1 ;;
@@ -39,22 +45,58 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 if [[ -z "$PANEL_URL" ]]; then
-  read -rp "Panel WS URL (örn: ws://panel.example.com:4000): " PANEL_URL
+  read -rp "Panel URL (otomatik mod için http://..., manuel mod için ws://...): " PANEL_URL
 fi
-if [[ -z "$AGENT_TOKEN" ]]; then
-  read -rsp "Agent token (panel'den aldığın flt_...): " AGENT_TOKEN
+
+# Mod tespiti
+MODE=""
+if [[ -n "$AGENT_TOKEN" ]]; then
+  MODE="token"
+elif [[ -n "$REGISTER_SECRET" ]]; then
+  MODE="register"
+else
   echo
+  echo "Hangi mod?"
+  echo "  1) Otomatik kayıt (register secret ile) — panel UI'da hiçbir şey eklemezsin"
+  echo "  2) Manuel token (panel UI'da sunucu oluşturup token kopyaladıysan)"
+  read -rp "Seç [1/2]: " MODE_CHOICE
+  if [[ "$MODE_CHOICE" == "1" ]]; then
+    read -rsp "Registration secret (flt_reg_...): " REGISTER_SECRET; echo
+    MODE="register"
+  else
+    read -rsp "Agent token (flt_...): " AGENT_TOKEN; echo
+    MODE="token"
+  fi
 fi
 
-# Token format kontrolü
-if [[ ! "$AGENT_TOKEN" =~ ^flt_[A-Za-z0-9]{30,80}$ ]]; then
-  echo "[!] Token formatı geçersiz (flt_ ile başlamalı, alfanumerik 30-80 karakter)" >&2
-  exit 1
+# Format kontrolleri
+if [[ "$MODE" == "token" ]]; then
+  if [[ ! "$AGENT_TOKEN" =~ ^flt_[A-Za-z0-9]{30,80}$ ]]; then
+    echo "[!] Token formatı geçersiz (flt_<alnum>{30-80})" >&2
+    exit 1
+  fi
+  # token modu → PANEL_URL ws:// olmalı, /agent path'i lazım
+  if [[ ! "$PANEL_URL" =~ ^wss?:// ]]; then
+    echo "[uyarı] Token modunda PANEL_URL ws:// veya wss:// olmalı. Dönüştürüyorum..."
+    PANEL_URL="${PANEL_URL/http:/ws:}"
+    PANEL_URL="${PANEL_URL/https:/wss:}"
+  fi
+else
+  if [[ ! "$REGISTER_SECRET" =~ ^flt_reg_[A-Za-z0-9]{20,80}$ ]]; then
+    echo "[!] Registration secret formatı geçersiz (flt_reg_<alnum>{20-80})" >&2
+    exit 1
+  fi
+  # register modu → PANEL_URL HTTP olmalı (API çağrısı için)
+  if [[ ! "$PANEL_URL" =~ ^https?:// ]]; then
+    echo "[uyarı] Register modunda PANEL_URL http:// veya https:// olmalı. Dönüştürüyorum..."
+    PANEL_URL="${PANEL_URL/ws:/http:}"
+    PANEL_URL="${PANEL_URL/wss:/https:}"
+  fi
 fi
 
-# Panel URL'de wss:// kullanmaya teşvik et
-if [[ "$PANEL_URL" =~ ^ws:// && ! "$PANEL_URL" =~ ^ws://(localhost|127\.0\.0\.1) ]]; then
-  echo "[uyarı] Plain ws:// — token şifresiz iletilir. Production'da wss:// kullan."
+# Plain http/ws uyarısı
+if [[ "$PANEL_URL" =~ ^(http|ws):// && ! "$PANEL_URL" =~ ^(http|ws)://(localhost|127\.0\.0\.1) ]]; then
+  echo "[uyarı] Plain $PANEL_URL — token/secret şifresiz iletilir. Production'da https/wss kullan."
 fi
 
 echo "==> Fleet Agent kurulumu başlıyor"
@@ -115,13 +157,25 @@ chown -R root:root "$INSTALL_DIR"
 chmod 750 "$INSTALL_DIR"
 chmod 640 "$INSTALL_DIR/agent.js" "$INSTALL_DIR/package.json"
 
-# ---------- env dosyası (token burada saklanır) ----------
+# ---------- env dosyası (token/secret burada saklanır) ----------
 ENV_FILE="$INSTALL_DIR/.env"
-cat > "$ENV_FILE" <<EOF
+if [[ "$MODE" == "token" ]]; then
+  cat > "$ENV_FILE" <<EOF
 PANEL_URL=$PANEL_URL
 AGENT_TOKEN=$AGENT_TOKEN
 ${HOSTNAME_ARG:+AGENT_HOSTNAME=$HOSTNAME_ARG}
 EOF
+else
+  # Register modu: agent HTTP API'sini ve WS endpoint'ini bilmeli
+  # PANEL_URL http://host:3000 → WS http://host:3000 (agent içinde port türetilir)
+  cat > "$ENV_FILE" <<EOF
+PANEL_HTTP_URL=$PANEL_URL
+PANEL_URL=$(echo "$PANEL_URL" | sed -e 's|^http://|ws://|' -e 's|^https://|wss://|' -e 's|:3000\b|:4000|')
+AGENT_REGISTER_SECRET=$REGISTER_SECRET
+AGENT_TOKEN_FILE=$INSTALL_DIR/.token
+${HOSTNAME_ARG:+AGENT_HOSTNAME=$HOSTNAME_ARG}
+EOF
+fi
 chmod 600 "$ENV_FILE"
 chown root:root "$ENV_FILE"
 

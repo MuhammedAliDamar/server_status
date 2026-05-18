@@ -4,17 +4,19 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
 model Server {
   id          String   @id @default(cuid())
   name        String   @unique
+  fingerprint String?  @unique
   host        String?
   description String?
   tokenHash   String
   active      Boolean  @default(true)
+  autoRegistered Boolean @default(false)
   lastSeenAt  DateTime?
   os          String?
   cpuCores    Int?
