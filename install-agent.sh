@@ -191,6 +191,9 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=$INSTALL_DIR
 EnvironmentFile=$ENV_FILE
+Environment=HOME=/root
+Environment=PM2_HOME=/root/.pm2
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:/root/.local/bin
 ExecStart=/usr/bin/env node $INSTALL_DIR/agent.js
 Restart=always
 RestartSec=5
