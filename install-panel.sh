@@ -99,14 +99,14 @@ else
   exit 1
 fi
 
-# ---------- Node.js 20 ----------
+# ---------- Node.js 20+ (Next.js 16 ≥20.9 zorunlu) ----------
 NODE_OK=false
 if command -v node >/dev/null 2>&1; then
   NV=$(node -p "process.versions.node.split('.')[0]")
-  [[ "$NV" -ge 18 ]] && NODE_OK=true
+  [[ "$NV" -ge 20 ]] && NODE_OK=true
 fi
 if ! $NODE_OK; then
-  echo "==> Node.js 20 kuruluyor"
+  echo "==> Node.js 20 kuruluyor (mevcut Node varsa 20'ye günceller — Next.js 16 zorunlu kılıyor)"
   if command -v apt-get >/dev/null 2>&1; then
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
     apt-get install -y nodejs
@@ -114,6 +114,7 @@ if ! $NODE_OK; then
     curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
     (command -v dnf >/dev/null && dnf install -y nodejs) || yum install -y nodejs
   fi
+  node -v
 fi
 
 # ---------- PM2 ----------
