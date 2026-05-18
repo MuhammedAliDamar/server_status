@@ -10,9 +10,30 @@ import { promisify } from "node:util";
 import fs from "node:fs/promises";
 import fsSync from "node:fs";
 import path from "node:path";
+import url from "node:url";
 import WebSocket from "ws";
 
 const execFileAsync = promisify(execFile);
+
+// Agent'ın bulunduğu dizinden .env yükle (PM2 env'i kaybederse de çalışsın)
+try {
+  const here = path.dirname(url.fileURLToPath(import.meta.url));
+  const envPath = path.join(here, ".env");
+  if (fsSync.existsSync(envPath)) {
+    for (const raw of fsSync.readFileSync(envPath, "utf8").split("\n")) {
+      const line = raw.trim();
+      if (!line || line.startsWith("#")) continue;
+      const eq = line.indexOf("=");
+      if (eq < 0) continue;
+      const k = line.slice(0, eq).trim();
+      let v = line.slice(eq + 1).trim();
+      if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+        v = v.slice(1, -1);
+      }
+      if (!(k in process.env)) process.env[k] = v;
+    }
+  }
+} catch {}
 
 // İki mod:
 //   - Manuel: PANEL_URL (ws://...) + AGENT_TOKEN
