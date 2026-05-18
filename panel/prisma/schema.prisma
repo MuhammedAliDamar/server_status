@@ -1,0 +1,106 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Server {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  host        String?
+  description String?
+  tokenHash   String
+  active      Boolean  @default(true)
+  lastSeenAt  DateTime?
+  os          String?
+  cpuCores    Int?
+  totalMem    BigInt?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  processes   Process[]
+  snapshots   MetricSnapshot[]
+  auditLogs   AuditLog[]
+  alertRules  AlertRule[]
+}
+
+model Process {
+  id          String   @id @default(cuid())
+  serverId    String
+  pm2Id       Int
+  name        String
+  status      String
+  cpu         Float    @default(0)
+  memory      BigInt   @default(0)
+  uptime      BigInt   @default(0)
+  restarts    Int      @default(0)
+  port        Int?
+  cwd         String?
+  gitBranch   String?
+  gitCommit   String?
+  gitCommitMsg String?
+  gitDirty    Boolean  @default(false)
+  updatedAt   DateTime @updatedAt
+
+  server      Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+
+  @@unique([serverId, pm2Id])
+}
+
+model MetricSnapshot {
+  id          String   @id @default(cuid())
+  serverId    String
+  cpu         Float
+  memUsed     BigInt
+  memTotal    BigInt
+  diskUsed    BigInt
+  diskTotal   BigInt
+  load1       Float
+  load5       Float
+  load15      Float
+  netRx       BigInt   @default(0)
+  netTx       BigInt   @default(0)
+  createdAt   DateTime @default(now())
+
+  server      Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+
+  @@index([serverId, createdAt])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  serverId    String?
+  action      String
+  target      String?
+  payload     String?
+  success     Boolean  @default(true)
+  error       String?
+  createdAt   DateTime @default(now())
+
+  server      Server?  @relation(fields: [serverId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+}
+
+model AlertRule {
+  id          String   @id @default(cuid())
+  serverId    String?
+  type        String
+  threshold   Float
+  durationSec Int      @default(60)
+  enabled     Boolean  @default(true)
+  lastFiredAt DateTime?
+  createdAt   DateTime @default(now())
+
+  server      Server?  @relation(fields: [serverId], references: [id], onDelete: Cascade)
+}
+
+model Settings {
+  key         String   @id
+  value       String
+  updatedAt   DateTime @updatedAt
+}
