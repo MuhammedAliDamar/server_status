@@ -8,7 +8,9 @@ import AddServerDialog from "./AddServerDialog";
 type ServerCard = {
   id: string;
   name: string;
+  label: string | null;
   host: string | null;
+  publicIp: string | null;
   description: string | null;
   active: boolean;
   lastSeenAt: string | null;
@@ -31,6 +33,7 @@ export default function Dashboard() {
   const [servers, setServers] = useState<ServerCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
+  const [editing, setEditing] = useState<{ id: string; label: string } | null>(null);
 
   async function load() {
     try {
@@ -58,9 +61,12 @@ export default function Dashboard() {
             <span className="text-xs text-muted-foreground">
               {servers.length > 0 ? (
                 <>
-                  <span className={onlineCount === servers.length ? "text-green-500" : "text-yellow-500"}>●</span> {onlineCount}/{servers.length} online
+                  <span className={onlineCount === servers.length ? "text-green-500" : "text-yellow-500"}>●</span>{" "}
+                  {onlineCount}/{servers.length} online
                 </>
-              ) : "no servers"}
+              ) : (
+                "no servers"
+              )}
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -91,13 +97,30 @@ export default function Dashboard() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {servers.map((s) => (
-              <ServerCardView key={s.id} server={s} onRefresh={load} />
+              <ServerCardView
+                key={s.id}
+                server={s}
+                onRefresh={load}
+                onEdit={() => setEditing({ id: s.id, label: s.label || s.name })}
+              />
             ))}
           </div>
         )}
       </main>
 
       <AddServerDialog open={addOpen} onClose={() => setAddOpen(false)} onCreated={load} />
+
+      {editing && (
+        <EditLabelDialog
+          serverId={editing.id}
+          initialLabel={editing.label}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
+            load();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -117,18 +140,34 @@ function EmptyState({ onAdd }: { onAdd: () => void }) {
   );
 }
 
-function ServerCardView({ server, onRefresh }: { server: ServerCard; onRefresh: () => void }) {
+function ServerCardView({
+  server,
+  onRefresh,
+  onEdit,
+}: {
+  server: ServerCard;
+  onRefresh: () => void;
+  onEdit: () => void;
+}) {
   async function deleteServer(e: React.MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
-    if (!confirm(`Delete "${server.name}"? This cannot be undone.`)) return;
+    const title = server.label || server.name;
+    if (!confirm(`Delete "${title}"? This cannot be undone.`)) return;
     await fetch(`/api/servers/${server.id}`, { method: "DELETE" });
     onRefresh();
+  }
+
+  function startEdit(e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    onEdit();
   }
 
   const m = server.metrics;
   const memPct = m && m.memTotal > 0 ? (m.memUsed / m.memTotal) * 100 : 0;
   const diskPct = m && m.diskTotal > 0 ? (m.diskUsed / m.diskTotal) * 100 : 0;
+  const title = server.label || server.name;
 
   return (
     <Link
@@ -136,18 +175,28 @@ function ServerCardView({ server, onRefresh }: { server: ServerCard; onRefresh: 
       className="block bg-card border border-border rounded-xl p-4 hover:border-accent/30 transition"
     >
       <div className="flex items-start justify-between mb-3">
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className={server.online ? "text-green-500" : "text-zinc-400"}>●</span>
-            <h3 className="font-semibold truncate">{server.name}</h3>
+            <h3 className="font-semibold truncate">{title}</h3>
+            <button
+              onClick={startEdit}
+              className="opacity-30 hover:opacity-100 text-xs text-muted-foreground"
+              title="Rename"
+            >
+              ✎
+            </button>
           </div>
-          <p className="text-xs text-muted-foreground mt-0.5 truncate">
-            {server.host || "—"} {server.os && `· ${server.os.split(" ")[0]}`}
+          <p className="text-xs text-muted-foreground mt-0.5 truncate font-mono">
+            {server.publicIp && <span>{server.publicIp}</span>}
+            {server.publicIp && server.host && <span className="mx-1">·</span>}
+            {server.host && <span>{server.host}</span>}
+            {server.os && <span className="ml-1">· {server.os.split(" ")[0]}</span>}
           </p>
         </div>
         <button
           onClick={deleteServer}
-          className="text-xs text-muted-foreground hover:text-red-500 opacity-50 hover:opacity-100"
+          className="text-xs text-muted-foreground hover:text-red-500 opacity-50 hover:opacity-100 ml-2"
           title="Delete"
         >
           ✕
@@ -183,6 +232,70 @@ function MetricBar({ label, pct, value }: { label: string; pct: number; value: s
       </div>
       <div className="h-1.5 bg-muted rounded-full overflow-hidden">
         <div className={`h-full ${color} transition-all`} style={{ width: `${Math.min(100, pct)}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function EditLabelDialog({
+  serverId,
+  initialLabel,
+  onClose,
+  onSaved,
+}: {
+  serverId: string;
+  initialLabel: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [value, setValue] = useState(initialLabel);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function save() {
+    if (!value.trim()) return;
+    setSaving(true);
+    setError("");
+    const res = await fetch(`/api/servers/${serverId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ label: value.trim() }),
+    });
+    setSaving(false);
+    if (res.ok) onSaved();
+    else {
+      const d = await res.json().catch(() => ({}));
+      setError(d.error || "Failed");
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-card border border-border rounded-xl w-full max-w-md p-6 mx-4" onClick={(e) => e.stopPropagation()}>
+        <h2 className="text-lg font-semibold mb-4">Rename Server</h2>
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") save();
+            else if (e.key === "Escape") onClose();
+          }}
+          autoFocus
+          maxLength={120}
+          className="w-full px-3 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-accent/20"
+        />
+        {error && <div className="text-sm text-red-500 mt-2">{error}</div>}
+        <div className="flex justify-end gap-2 mt-4">
+          <button onClick={onClose} className="px-3 py-2 text-sm rounded-md border border-border hover:bg-muted">Cancel</button>
+          <button
+            onClick={save}
+            disabled={saving || !value.trim() || value.trim() === initialLabel}
+            className="px-3 py-2 text-sm rounded-md bg-accent text-background font-medium hover:opacity-90 disabled:opacity-50"
+          >
+            {saving ? "Saving…" : "Save"}
+          </button>
+        </div>
       </div>
     </div>
   );

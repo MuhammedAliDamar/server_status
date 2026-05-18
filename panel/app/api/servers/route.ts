@@ -16,7 +16,9 @@ export async function GET() {
     return {
       id: s.id,
       name: s.name,
+      label: s.label,
       host: s.host,
+      publicIp: s.publicIp,
       description: s.description,
       active: s.active,
       lastSeenAt: s.lastSeenAt,
@@ -39,23 +41,77 @@ export async function GET() {
 }
 
 const createSchema = z.object({
-  name: z.string().min(1).max(64).regex(/^[a-zA-Z0-9._-]+$/, "alphanumeric, dot, dash, underscore"),
+  label: z.string().min(1).max(120),
   description: z.string().max(500).optional(),
 });
+
+function slug(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[ğ]/g, "g").replace(/[ü]/g, "u").replace(/[ş]/g, "s")
+    .replace(/[ı]/g, "i").replace(/[ö]/g, "o").replace(/[ç]/g, "c")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40) || "server";
+}
+
+function randomSuffix(n = 4): string {
+  return Math.random().toString(36).slice(2, 2 + n);
+}
 
 export async function POST(req: Request) {
   if (!(await isAuthenticated())) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const body = await req.json().catch(() => ({}));
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message || "invalid input" }, { status: 400 });
-  const exists = await prisma.server.findUnique({ where: { name: parsed.data.name } });
-  if (exists) return NextResponse.json({ error: "name already in use" }, { status: 409 });
+
+  // Label'dan unique name türet
+  const base = slug(parsed.data.label);
+  let name = base;
+  let tries = 0;
+  while (await prisma.server.findUnique({ where: { name } })) {
+    tries++;
+    name = `${base}-${randomSuffix()}`;
+    if (tries > 5) { name = `${base}-${Date.now().toString(36).slice(-6)}`; break; }
+  }
 
   const token = generateToken();
   const tokenHash = await hashToken(token);
   const server = await prisma.server.create({
-    data: { name: parsed.data.name, description: parsed.data.description, tokenHash },
+    data: {
+      name,
+      label: parsed.data.label,
+      description: parsed.data.description,
+      tokenHash,
+    },
   });
-  await prisma.auditLog.create({ data: { serverId: server.id, action: "server.created", target: server.name } });
-  return NextResponse.json({ id: server.id, name: server.name, token });
+  await prisma.auditLog.create({
+    data: { serverId: server.id, action: "server.created", target: server.name },
+  });
+
+  // Hazır install komutunu kur
+  const hostHeader = req.headers.get("host") || "localhost";
+  const proto = req.headers.get("x-forwarded-proto") || "http";
+  const wsExternal = process.env.PANEL_EXTERNAL_WS_URL;
+
+  let panelArg: string;
+  if (wsExternal) {
+    // nginx + TLS arkasında: --panel <https://domain>  (installer auto-derives wss)
+    panelArg = wsExternal.replace(/\/agent$/, "").replace(/^wss?:\/\//, proto === "https" ? "https://" : "http://");
+  } else {
+    // Raw IP/port: agent direkt WS_PORT'a bağlanır
+    const wsPort = process.env.WS_PORT || "2589";
+    const host = hostHeader.split(":")[0];
+    panelArg = `ws://${host}:${wsPort}`;
+  }
+
+  const installCommand = `curl -fsSL https://raw.githubusercontent.com/MuhammedAliDamar/server_status/main/install-agent.sh | sudo bash -s -- --panel ${panelArg} --token ${token}`;
+
+  return NextResponse.json({
+    id: server.id,
+    name: server.name,
+    label: server.label,
+    token,
+    installCommand,
+  });
 }

@@ -159,9 +159,15 @@ wss.on("connection", async (ws, req) => {
 
     if (msg.type === "hello") {
       const m = msg as any;
+      // Bağlantı IP'sini de yakala
+      const remoteAddr = req.socket.remoteAddress || "";
+      const publicIp = (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0].trim() ||
+        (req.headers["x-real-ip"] as string | undefined) ||
+        (remoteAddr.startsWith("::ffff:") ? remoteAddr.slice(7) : remoteAddr) ||
+        null;
       await prisma.server.update({
         where: { id: serverId },
-        data: { os: m.os, cpuCores: m.cpuCores, totalMem: BigInt(m.totalMem), lastSeenAt: new Date(), host: m.hostname },
+        data: { os: m.os, cpuCores: m.cpuCores, totalMem: BigInt(m.totalMem), lastSeenAt: new Date(), host: m.hostname, publicIp },
       });
       agentHub.setOnline(serverId, { agentVersion: m.agentVersion, os: m.os });
     } else if (msg.type === "snapshot") {

@@ -13,7 +13,9 @@ model Server {
   name        String   @unique
   fingerprint String?  @unique
   host        String?
+  label       String?
   description String?
+  publicIp    String?
   tokenHash   String
   active      Boolean  @default(true)
   autoRegistered Boolean @default(false)

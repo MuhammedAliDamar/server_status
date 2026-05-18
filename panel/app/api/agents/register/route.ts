@@ -88,6 +88,9 @@ export async function POST(req: Request) {
   const token = generateToken();
   const tokenHash = await hashToken(token);
 
+  // Public IP'yi de yakala (proxy header'larından)
+  const publicIp = ip !== "unknown" ? ip : null;
+
   let server;
   if (existing) {
     // Token rotate, lastSeen update
@@ -100,6 +103,7 @@ export async function POST(req: Request) {
         cpuCores,
         totalMem: totalMem != null ? BigInt(totalMem) : undefined,
         active: true,
+        publicIp,
       },
     });
     await prisma.auditLog.create({
@@ -128,6 +132,8 @@ export async function POST(req: Request) {
         totalMem: totalMem != null ? BigInt(totalMem) : undefined,
         tokenHash,
         autoRegistered: true,
+        label: hostname, // varsayılan label hostname (kullanıcı sonra değiştirebilir)
+        publicIp,
       },
     });
     await prisma.auditLog.create({

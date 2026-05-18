@@ -15,7 +15,9 @@ export async function GET(_req: Request, { params }: Params) {
   return NextResponse.json({
     id: server.id,
     name: server.name,
+    label: server.label,
     host: server.host,
+    publicIp: server.publicIp,
     description: server.description,
     active: server.active,
     lastSeenAt: server.lastSeenAt,
@@ -32,14 +34,18 @@ export async function PATCH(req: Request, { params }: Params) {
   if (!(await isAuthenticated())) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const { id } = await params;
   const body = await req.json().catch(() => ({}));
-  const updated = await prisma.server.update({
-    where: { id },
-    data: {
-      description: typeof body.description === "string" ? body.description : undefined,
-      active: typeof body.active === "boolean" ? body.active : undefined,
-    },
-  });
-  return NextResponse.json({ id: updated.id });
+  const data: Record<string, unknown> = {};
+  if (typeof body.label === "string") data.label = body.label.slice(0, 120);
+  if (typeof body.description === "string") data.description = body.description.slice(0, 500);
+  if (typeof body.active === "boolean") data.active = body.active;
+  if (Object.keys(data).length === 0) {
+    return NextResponse.json({ error: "no fields to update" }, { status: 400 });
+  }
+  const updated = await prisma.server.update({ where: { id }, data });
+  await prisma.auditLog.create({
+    data: { serverId: id, action: "server.updated", payload: JSON.stringify(Object.keys(data)) },
+  }).catch(() => {});
+  return NextResponse.json({ id: updated.id, label: updated.label });
 }
 
 export async function DELETE(_req: Request, { params }: Params) {
