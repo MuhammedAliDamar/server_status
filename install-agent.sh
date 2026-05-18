@@ -197,20 +197,14 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 
-# Güvenlik hardening (Node.js V8 JIT ile uyumlu olanlar)
-# Not: MemoryDenyWriteExecute Node JIT'i bozar (V8 executable page allocate eder)
+# Güvenlik hardening (Node.js V8 ile uyumlu minimum set)
+# Not: ProtectSystem=strict, LockPersonality, MemoryDenyWriteExecute, SystemCallArchitectures
+# V8 JIT'i bozabilir (executable page allocation engellenir → core dump)
 NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=true
 PrivateTmp=true
+ProtectHome=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
-ProtectControlGroups=true
-RestrictSUIDSGID=true
-LockPersonality=true
-RestrictRealtime=true
-SystemCallArchitectures=native
-ReadWritePaths=/tmp
 
 [Install]
 WantedBy=multi-user.target
