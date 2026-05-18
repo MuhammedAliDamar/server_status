@@ -197,12 +197,11 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 
-# Güvenlik hardening (Node.js V8 ile uyumlu minimum set)
-# Not: ProtectSystem=strict, LockPersonality, MemoryDenyWriteExecute, SystemCallArchitectures
-# V8 JIT'i bozabilir (executable page allocation engellenir → core dump)
+# Güvenlik hardening (Node.js V8 + PM2 socket erişimi ile uyumlu minimum set)
+# Not: ProtectHome=true /root/.pm2/*.sock erişimini engeller → pm2 jlist patlar
+# Not: ProtectSystem=strict, MemoryDenyWriteExecute, SystemCallArchitectures V8 JIT'i bozar
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectHome=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
 
