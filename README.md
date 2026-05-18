@@ -59,21 +59,25 @@ Otomatik olarak:
 
 Detaylar için `agent/README.md`.
 
-## Sunucuya kurulum (production)
+## Panel kurulumu (tek satır)
 
-Panel için (yeni VPS):
+Boş bir VPS'te (Ubuntu/Debian/CentOS/Alpine), root olarak:
 
 ```bash
-cd panel
-npm install
-npx prisma migrate deploy
-npm run build
-# .env içinde: ADMIN_PASSWORD, SESSION_SECRET, SLACK_WEBHOOK_URL
-pm2 start npm --name fleet-panel-web -- start
-pm2 start "npm run ws" --name fleet-panel-ws
+curl -fsSL https://raw.githubusercontent.com/MuhammedAliDamar/server_status/main/install-panel.sh | sudo bash
 ```
 
-Agent için (her hedef sunucu): `agent/README.md` (systemd örneği var).
+Otomatik olarak:
+- Node.js 20 + git + build araçları kurar
+- Repo'yu `/opt/fleet-panel` altına klonlar
+- Random `ADMIN_PASSWORD` ve `SESSION_SECRET` üretir, `.env`'e yazar
+- `prisma migrate deploy`, `npm run build`
+- systemd: `fleet-panel-web` (Next.js, :3000) + `fleet-panel-ws` (WS, :4000)
+- Sonuçta URL + şifre yazdırır
+
+Minimum donanım: **1 GB RAM, 1 vCPU, 25 GB disk** yeterli.
+
+> ⚠️ Production'da panel'i HTTPS arkasına al (Caddy en kolayı). Default port'ları firewall ile sınırla.
 
 ## Özellikler
 
